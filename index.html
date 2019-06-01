@@ -1,0 +1,31 @@
+<!-- index.html -->
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Race Results</title>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.5/css/bulma.css">
+      </head>
+  <body>
+      <section class="section">
+        <div id="app" class="container">
+        </div>
+      </section>
+    
+    <script defer src="https://use.fontawesome.com/releases/v5.3.1/js/all.js"></script>
+    <script src="./elm.js"></script>
+    <script>
+      const errorLogger = error => console.error(`App Error: ${error}`);
+      const node = document.querySelector('#app');
+      
+      // add flags here
+      const flags = {}
+      try {
+        const app = Elm.Main.init({ node, flags });
+      } catch (e) {
+        errorLogger(e);
+        node.textContent = 'An error occurred while initializing the app';
+      }
+    </script>
+  </body>
+</html>
