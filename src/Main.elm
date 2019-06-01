@@ -127,23 +127,13 @@ displayPage model =
     let
         tree =
             case Json.Decode.decodeString decodePlanJson model.currPlanText of
-                Err err ->
-                    -- text "Error"
-                    text <| Json.Decode.errorToString err
-
                 Ok planJson ->
-                    row [ width fill, paddingEach { top = 20, left = 0, right = 0, bottom = 0 } ]
-                        [ column [ width (fillPortion 7), height fill, alignTop ] <|
-                            planNodeTree planJson.plan
-                        ]
+                    planNodeTree planJson.plan
 
-        -- planNodeTree planJson.plan
-        -- text "Success"
-        --Err err ->
-        --el Attr.error <| text <| Json.Decode.errorToString err
-        -- Json.Decode.errorToString err
+                Err err ->
+                    [ text <| Json.Decode.errorToString err ]
     in
-    column [] [ tree ]
+    column [] tree
 
 
 childNodeTree : Plans -> Element Msg
