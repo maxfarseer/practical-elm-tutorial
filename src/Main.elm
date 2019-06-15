@@ -41,6 +41,7 @@ type Msg
     | ChangePassword String
     | ChangeUserName String
     | RequestLogout
+    | DumpModel ()
 
 
 type alias Model =
@@ -97,7 +98,7 @@ init flags =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    Ports.dumpModel DumpModel
 
 
 
@@ -162,6 +163,9 @@ update msg model =
         RequestLogout ->
             ( { model | currPage = LoginPage, sessionId = Nothing}
             , Ports.saveSessionId <| Nothing )
+
+        DumpModel () ->
+            ( Debug.log "model" model, Cmd.none )
 
 
 navBar : Element Msg
