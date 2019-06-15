@@ -19,9 +19,21 @@
       const node = document.querySelector('#app');
       
       // add flags here
-      const flags = {}
+      const flags = {
+        sessionId: localStorage.getItem("sessionId")
+      }
+
       try {
         const app = Elm.Main.init({ node, flags });
+
+        app.ports.saveSessionId.subscribe(sessionId => {
+            if (sessionId === null) {
+                localStorage.removeItem("sessionId")
+            } else {
+                localStorage.setItem("sessionId", sessionId)
+            }
+        })
+
       } catch (e) {
         errorLogger(e);
         node.textContent = 'An error occurred while initializing the app';
