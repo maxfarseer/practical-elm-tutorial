@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Attr
+import Auth
 import Browser
 import Browser.Events exposing (onKeyPress)
 import Color exposing (..)
@@ -17,7 +18,6 @@ import Json.Encode as Encode
 import PlanParsers.Json exposing (..)
 import PlanTree
 import Ports
-import Time
 
 
 type Page
@@ -34,29 +34,23 @@ type Msg
     | MouseLeftPlanNode Plan
     | ToggleMenu
     | CreatePlan
-    | StartLogin
+    | Auth Auth.Msg
     | RequestLogin
-    | FinishLogin (Result Http.Error String)
     | RequestSavedPlans
     | FinishSavedPlans (Result Http.Error (List SavedPlan))
     | SubmitPlan
     | ShowPlan String
-    | ChangePassword String
-    | ChangeUserName String
     | RequestLogout
     | DumpModel ()
-    | SendHeartbeat Time.Posix
 
 
 type alias Model =
-    { currPage : Page
+    { auth : Auth.Model
+    , currPage : Page
     , currPlanText : String
     , selectedNode : Maybe Plan
     , isMenuOpen : Bool
-    , password : String
-    , userName : String
     , lastError : String
-    , sessionId : Maybe String
     , savedPlans : List SavedPlan
     }
 
@@ -82,14 +76,12 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { currPage = InputPage
+    ( { auth = Auth.init flags.sessionId
+      , currPage = InputPage
       , currPlanText = ""
       , selectedNode = Nothing
       , isMenuOpen = False
-      , password = ""
-      , userName = ""
       , lastError = ""
-      , sessionId = flags.sessionId
       , savedPlans = []
       }
     , Cmd.none
@@ -117,14 +109,25 @@ subscriptions model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        ChangePassword s ->
-            ( { model | password = s }, Cmd.none )
+        Auth authMsg ->
+            let
+                ( authModel, authCmd ) =
+                    Auth.update serverUrl authMsg model.auth
+
+                currPage =
+                    case authMsg of
+                        Auth.FinishLogin (Ok _) ->
+                            InputPage
+
+                        _ ->
+                            model.currPage
+            in
+            ( { model | auth = authModel, currPage = currPage }
+            , Cmd.map Auth authCmd
+            )
 
         ChangePlanText s ->
             ( { model | currPlanText = s }, Cmd.none )
-
-        ChangeUserName s ->
-            ( { model | userName = s }, Cmd.none )
 
         CreatePlan ->
             ( { model | currPage = InputPage, currPlanText = "" }, Cmd.none )
@@ -139,18 +142,7 @@ update msg model =
             ( model, Cmd.none )
 
         RequestLogin ->
-            ( { model | currPage = LoginPage, password = "", userName = "" }, Cmd.none )
-
-        StartLogin ->
-            ( model, login model.userName model.password )
-
-        FinishLogin (Ok sessionId) ->
-            ( { model | sessionId = Just sessionId, currPage = InputPage }
-            , Ports.saveSessionId <| Just sessionId
-            )
-
-        FinishLogin (Err error) ->
-            ( { model | lastError = httpErrorString error }, Cmd.none )
+            ( { model | currPage = LoginPage }, Cmd.none )
 
         SubmitPlan ->
             ( { model | currPage = DisplayPage }, Cmd.none )
@@ -159,7 +151,7 @@ update msg model =
             ( { model | isMenuOpen = not model.isMenuOpen }, Cmd.none )
 
         RequestSavedPlans ->
-            ( { model | currPage = SavedPlansPage }, getSavedPlans model.sessionId )
+            ( { model | currPage = SavedPlansPage }, getSavedPlans model.auth.sessionId )
 
         FinishSavedPlans (Ok savedPlans) ->
             ( { model | savedPlans = savedPlans }, Cmd.none )
@@ -171,15 +163,19 @@ update msg model =
             ( { model | currPlanText = planText, currPage = DisplayPage }, Cmd.none )
 
         RequestLogout ->
-            ( { model | currPage = LoginPage, sessionId = Nothing }
+            let
+                auth =
+                    model.auth
+            in
+            ( { model
+                | currPage = LoginPage
+                , auth = { auth | sessionId = Nothing }
+              }
             , Ports.saveSessionId <| Nothing
             )
 
         DumpModel () ->
             ( Debug.log "model" model, Cmd.none )
-
-        SendHeartbeat _ ->
-            ( model, sendHeartbeat model.sessionId )
 
 
 navBar : Element Msg
@@ -300,7 +296,7 @@ menuPanel model =
     let
         items =
             [ el [ pointer, onClick CreatePlan ] <| text "New plan" ]
-                ++ (case model.sessionId of
+                ++ (case model.auth.sessionId of
                         Just _ ->
                             [ el [ pointer, onClick RequestSavedPlans ] <| text "Saved plans"
                             , el [ pointer, onClick RequestLogout ] <| text "Logout"
@@ -346,42 +342,24 @@ serverUrl =
     "http://localhost:3000/"
 
 
-login : String -> String -> Cmd Msg
-login userName password =
-    let
-        body =
-            Http.jsonBody <|
-                Encode.object
-                    [ ( "userName", Encode.string userName ), ( "password", Encode.string password ) ]
-
-        responseDecoder =
-            Decode.field "sessionId" Decode.string
-    in
-    Http.post
-        { url = serverUrl ++ "login"
-        , body = body
-        , expect = Http.expectJson FinishLogin responseDecoder
-        }
-
-
 loginPage : Model -> Element Msg
 loginPage model =
     column [ paddingXY 0 20, spacingXY 0 10, width (px 300), centerX ]
         [ Input.username Attr.input
-            { onChange = ChangeUserName
-            , text = model.userName
+            { onChange = Auth << Auth.ChangeUserName
+            , text = model.auth.userName
             , label = Input.labelAbove [] <| text "User name:"
             , placeholder = Nothing
             }
         , Input.currentPassword Attr.input
-            { onChange = ChangePassword
-            , text = model.password
+            { onChange = Auth << Auth.ChangePassword
+            , text = model.auth.password
             , label = Input.labelAbove [] <| text "Password:"
             , placeholder = Nothing
             , show = False
             }
         , Input.button Attr.greenButton
-            { onPress = Just StartLogin
+            { onPress = Just <| Auth Auth.StartLogin
             , label = el [ centerX ] <| text "Login"
             }
         , el Attr.error <| text model.lastError
@@ -443,20 +421,6 @@ savedPlansPage model =
         }
 
 
-sendHeartbeat : Maybe String -> Cmd Msg
-sendHeartbeat sessionId =
-    Http.request
-        { method = "POST"
-        , headers =
-            [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
-        , url = serverUrl ++ "heartbeat"
-        , body = Http.emptyBody
-        , timeout = Nothing
-        , tracker = Nothing
-        , expect = Http.expectWhatever <| always NoOp
-        }
-
-
 keyDecoder : Model -> Decode.Decoder Msg
 keyDecoder model =
     Decode.map2 Tuple.pair
@@ -476,7 +440,7 @@ keyDecoder model =
 
 keyToMsg : Model -> String -> Msg
 keyToMsg model key =
-    case ( key, model.sessionId ) of
+    case ( key, model.auth.sessionId ) of
         ( "KeyS", Just id ) ->
             RequestSavedPlans
 
