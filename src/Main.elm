@@ -2,6 +2,7 @@ module Main exposing (main)
 
 import Attr
 import Browser
+import Browser.Events exposing (onKeyPress)
 import Color exposing (..)
 import Element exposing (..)
 import Element.Background as Background
@@ -15,6 +16,7 @@ import Json.Decode.Pipeline exposing (required)
 import Json.Encode as Encode
 import PlanParsers.Json exposing (..)
 import Ports
+import Time
 
 
 type Page
@@ -42,6 +44,7 @@ type Msg
     | ChangeUserName String
     | RequestLogout
     | DumpModel ()
+    | SendHeartbeat Time.Posix
 
 
 type alias Model =
@@ -72,7 +75,7 @@ type alias SavedPlan =
 
 
 type alias Flags =
-    { sessionId: Maybe String
+    { sessionId : Maybe String
     }
 
 
@@ -98,7 +101,12 @@ init flags =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Ports.dumpModel DumpModel
+    Sub.batch
+        [ Ports.dumpModel DumpModel
+
+        --        , Time.every (100 * 1000) SendHeartbeat
+        , onKeyPress <| keyDecoder model
+        ]
 
 
 
@@ -137,7 +145,8 @@ update msg model =
 
         FinishLogin (Ok sessionId) ->
             ( { model | sessionId = Just sessionId, currPage = InputPage }
-            , Ports.saveSessionId <| Just sessionId)
+            , Ports.saveSessionId <| Just sessionId
+            )
 
         FinishLogin (Err error) ->
             ( { model | lastError = httpErrorString error }, Cmd.none )
@@ -161,11 +170,15 @@ update msg model =
             ( { model | currPlanText = planText, currPage = DisplayPage }, Cmd.none )
 
         RequestLogout ->
-            ( { model | currPage = LoginPage, sessionId = Nothing}
-            , Ports.saveSessionId <| Nothing )
+            ( { model | currPage = LoginPage, sessionId = Nothing }
+            , Ports.saveSessionId <| Nothing
+            )
 
         DumpModel () ->
             ( Debug.log "model" model, Cmd.none )
+
+        SendHeartbeat _ ->
+            ( model, sendHeartbeat model.sessionId )
 
 
 navBar : Element Msg
@@ -418,13 +431,15 @@ menuPanel model =
     let
         items =
             [ el [ pointer, onClick CreatePlan ] <| text "New plan" ]
-            ++ ( case model.sessionId of
-                Just _ ->
-                    [ el [ pointer, onClick RequestSavedPlans ] <| text "Saved plans"
-                    , el [ pointer, onClick RequestLogout ] <| text "Logout" ]
-                Nothing ->
-                    [ el [ pointer, onClick RequestLogin ] <| text "Login" ]
-            )
+                ++ (case model.sessionId of
+                        Just _ ->
+                            [ el [ pointer, onClick RequestSavedPlans ] <| text "Saved plans"
+                            , el [ pointer, onClick RequestLogout ] <| text "Logout"
+                            ]
+
+                        Nothing ->
+                            [ el [ pointer, onClick RequestLogin ] <| text "Login" ]
+                   )
 
         panel =
             column
@@ -557,6 +572,50 @@ savedPlansPage model =
               }
             ]
         }
+
+
+sendHeartbeat : Maybe String -> Cmd Msg
+sendHeartbeat sessionId =
+    Http.request
+        { method = "POST"
+        , headers =
+            [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
+        , url = serverUrl ++ "heartbeat"
+        , body = Http.emptyBody
+        , timeout = Nothing
+        , tracker = Nothing
+        , expect = Http.expectWhatever <| always NoOp
+        }
+
+
+keyDecoder : Model -> Decode.Decoder Msg
+keyDecoder model =
+    Decode.map2 Tuple.pair
+        (Decode.field "altKey" Decode.bool)
+        (Decode.field "shiftKey" Decode.bool)
+        |> Decode.andThen
+            (\altAndShiftFlags ->
+                case altAndShiftFlags of
+                    ( True, True ) ->
+                        Decode.field "code" Decode.string
+                            |> Decode.map (keyToMsg model)
+
+                    _ ->
+                        Decode.succeed NoOp
+            )
+
+
+keyToMsg : Model -> String -> Msg
+keyToMsg model key =
+    case ( key, model.sessionId ) of
+        ( "KeyS", Just id ) ->
+            RequestSavedPlans
+
+        ( "KeyN", _ ) ->
+            CreatePlan
+
+        _ ->
+            NoOp
 
 
 view : Model -> Browser.Document Msg
