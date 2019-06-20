@@ -14,44 +14,44 @@ import Element.Input as Input
 import Http
 import Json.Decode as Decode
 import Json.Decode.Pipeline exposing (required)
-import Json.Encode as Encode
+import Pages.Display as Display
+import Pages.Registration as Registration
+import Pages.SavedPlans as SavedPlans
 import PlanParsers.Json exposing (..)
-import PlanTree
 import Ports
+import Types exposing (AppState)
 
 
 type Page
     = InputPage
-    | DisplayPage
+    | DisplayPage Display.Model
     | LoginPage
-    | SavedPlansPage
+    | RegistrationPage Registration.Model
+    | SavedPlansPage SavedPlans.Model
 
 
 type Msg
     = NoOp
     | ChangePlanText String
-    | MouseEnteredPlanNode Plan
-    | MouseLeftPlanNode Plan
     | ToggleMenu
     | CreatePlan
     | Auth Auth.Msg
+    | Display Display.Msg
     | RequestLogin
     | RequestSavedPlans
+    | SavedPlans SavedPlans.Msg
     | FinishSavedPlans (Result Http.Error (List SavedPlan))
     | SubmitPlan
     | ShowPlan String
     | RequestLogout
     | DumpModel ()
+    | RequestRegistration
+    | Register Registration.Msg
 
 
 type alias Model =
-    { auth : Auth.Model
+    { appState : AppState
     , currPage : Page
-    , currPlanText : String
-    , selectedNode : Maybe Plan
-    , isMenuOpen : Bool
-    , lastError : String
-    , savedPlans : List SavedPlan
     }
 
 
@@ -76,13 +76,17 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { auth = Auth.init flags.sessionId
+    ( { appState =
+            { auth = Auth.init flags.sessionId
+            , currPlanText = ""
+            , isMenuOpen = False
+            , lastError = ""
+            , serverUrl = "http://localhost:3000/"
+
+            --          , selectedNode = Nothing
+            --          , savedPlans = []
+            }
       , currPage = InputPage
-      , currPlanText = ""
-      , selectedNode = Nothing
-      , isMenuOpen = False
-      , lastError = ""
-      , savedPlans = []
       }
     , Cmd.none
     )
@@ -107,12 +111,12 @@ subscriptions model =
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
-    case msg of
-        Auth authMsg ->
+update msg ({ appState } as model) =
+    case ( msg, model.currPage ) of
+        ( Auth authMsg, _ ) ->
             let
                 ( authModel, authCmd ) =
-                    Auth.update serverUrl authMsg model.auth
+                    Auth.update serverUrl authMsg appState.auth
 
                 currPage =
                     case authMsg of
@@ -122,60 +126,120 @@ update msg model =
                         _ ->
                             model.currPage
             in
-            ( { model | auth = authModel, currPage = currPage }
+            ( { model
+                | appState = { appState | auth = authModel }
+                , currPage = currPage
+              }
             , Cmd.map Auth authCmd
             )
 
-        ChangePlanText s ->
-            ( { model | currPlanText = s }, Cmd.none )
+        ( ChangePlanText s, InputPage ) ->
+            ( { model | appState = { appState | currPlanText = s } }, Cmd.none )
 
-        CreatePlan ->
-            ( { model | currPage = InputPage, currPlanText = "" }, Cmd.none )
+        ( CreatePlan, _ ) ->
+            ( { model
+                | appState = { appState | currPlanText = "" }
+                , currPage = InputPage
+              }
+            , Cmd.none
+            )
 
-        MouseEnteredPlanNode plan ->
-            ( { model | selectedNode = Just plan }, Cmd.none )
-
-        MouseLeftPlanNode commonFields ->
-            ( { model | selectedNode = Nothing }, Cmd.none )
-
-        NoOp ->
-            ( model, Cmd.none )
-
-        RequestLogin ->
+        ( RequestLogin, _ ) ->
             ( { model | currPage = LoginPage }, Cmd.none )
 
-        SubmitPlan ->
-            ( { model | currPage = DisplayPage }, Cmd.none )
-
-        ToggleMenu ->
-            ( { model | isMenuOpen = not model.isMenuOpen }, Cmd.none )
-
-        RequestSavedPlans ->
-            ( { model | currPage = SavedPlansPage }, getSavedPlans model.auth.sessionId )
-
-        FinishSavedPlans (Ok savedPlans) ->
-            ( { model | savedPlans = savedPlans }, Cmd.none )
-
-        FinishSavedPlans (Err error) ->
-            ( { model | lastError = httpErrorString error }, Cmd.none )
-
-        ShowPlan planText ->
-            ( { model | currPlanText = planText, currPage = DisplayPage }, Cmd.none )
-
-        RequestLogout ->
+        ( RequestLogout, _ ) ->
             let
                 auth =
-                    model.auth
+                    appState.auth
             in
             ( { model
                 | currPage = LoginPage
-                , auth = { auth | sessionId = Nothing }
+                , appState = { appState | auth = { auth | sessionId = Nothing } }
               }
             , Ports.saveSessionId <| Nothing
             )
 
-        DumpModel () ->
+        ( SubmitPlan, InputPage ) ->
+            ( { model | currPage = DisplayPage Display.init }, Cmd.none )
+
+        ( DumpModel (), _ ) ->
             ( Debug.log "model" model, Cmd.none )
+
+        ( RequestSavedPlans, _ ) ->
+            let
+                ( pageModel, pageCmd ) =
+                    SavedPlans.init appState.serverUrl appState.auth.sessionId
+            in
+            ( { model | currPage = SavedPlansPage pageModel }
+            , Cmd.map SavedPlans pageCmd
+            )
+
+        ( SavedPlans pageMsg, SavedPlansPage pageModel ) ->
+            let
+                ( newPageModel, outMsg ) =
+                    SavedPlans.update pageMsg pageModel
+
+                newModel =
+                    case outMsg of
+                        SavedPlans.DisplayPlan planText ->
+                            { model
+                                | appState = { appState | currPlanText = planText }
+                                , currPage = DisplayPage Display.init
+                            }
+
+                        _ ->
+                            { model | currPage = SavedPlansPage newPageModel }
+            in
+            ( newModel, Cmd.none )
+
+        ( RequestRegistration, _ ) ->
+            ( { model | currPage = RegistrationPage Registration.init }, Cmd.none )
+
+        ( Display pageMsg, DisplayPage pageModel ) ->
+            let
+                newPageModel =
+                    Display.update pageMsg pageModel
+            in
+            ( { model | currPage = DisplayPage newPageModel }, Cmd.none )
+
+        ( Register regMsg, RegistrationPage pageModel ) ->
+            let
+                ( regModel, regCmd, pageMsg ) =
+                    Registration.update regMsg model.appState pageModel
+
+                newModel =
+                    case pageMsg of
+                        Registration.FinishSuccessfully id ->
+                            let
+                                auth =
+                                    appState.auth
+                            in
+                            { appState =
+                                { appState | auth = { auth | sessionId = Just id } }
+                            , currPage = InputPage
+                            }
+
+                        Registration.DoNothing ->
+                            { model | currPage = RegistrationPage regModel }
+            in
+            ( newModel
+            , Cmd.map Register regCmd
+            )
+
+        ( ToggleMenu, _ ) ->
+            ( { model
+                | appState = { appState | isMenuOpen = not appState.isMenuOpen }
+              }
+            , Cmd.none
+            )
+
+        ( _, _ ) ->
+            ( model, Cmd.none )
+
+
+serverUrl : String
+serverUrl =
+    "http://localhost:3000/"
 
 
 navBar : Element Msg
@@ -209,7 +273,7 @@ inputPage model =
             , padding 3
             ]
             { onChange = ChangePlanText
-            , text = model.currPlanText
+            , text = model.appState.currPlanText
             , placeholder = Nothing
             , label =
                 Input.labelAbove [] <|
@@ -224,86 +288,21 @@ inputPage model =
         ]
 
 
-httpErrorString : Http.Error -> String
-httpErrorString error =
-    case error of
-        Http.BadBody message ->
-            "Unable to handle response: " ++ message
-
-        Http.BadStatus statusCode ->
-            "Server error: " ++ String.fromInt statusCode
-
-        Http.BadUrl url ->
-            "Invalid URL: " ++ url
-
-        Http.NetworkError ->
-            "Network error"
-
-        Http.Timeout ->
-            "Request timeout"
-
-
-decodePlanVersion : Decode.Decoder PlanVersion
-decodePlanVersion =
-    Decode.succeed PlanVersion
-        |> required "version" Decode.int
-        |> required "createdAt" Decode.string
-        |> required "planText" Decode.string
-
-
-decodeSavedPlans : Decode.Decoder (List SavedPlan)
-decodeSavedPlans =
-    Decode.list
-        (Decode.succeed SavedPlan
-            |> required "id" Decode.string
-            |> required "name" Decode.string
-            |> required "versions" (Decode.list decodePlanVersion)
-        )
-
-
-getSavedPlans : Maybe String -> Cmd Msg
-getSavedPlans sessionId =
-    Http.request
-        { method = "GET"
-        , headers =
-            [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
-        , url = serverUrl ++ "plans"
-        , body = Http.emptyBody
-        , timeout = Nothing
-        , tracker = Nothing
-        , expect = Http.expectJson FinishSavedPlans decodeSavedPlans
-        }
-
-
-displayPage : Model -> Element Msg
-displayPage model =
-    let
-        planTreeConfig =
-            { onMouseEnteredNode = MouseEnteredPlanNode
-            , onMouseLeftNode = MouseLeftPlanNode
-            }
-    in
-    case Decode.decodeString decodePlanJson model.currPlanText of
-        Ok planJson ->
-            PlanTree.render planTreeConfig planJson model.selectedNode
-
-        Err err ->
-            el [] <| text <| Decode.errorToString err
-
-
 menuPanel : Model -> Element Msg
 menuPanel model =
     let
         items =
             [ el [ pointer, onClick CreatePlan ] <| text "New plan" ]
-                ++ (case model.auth.sessionId of
+                ++ (case model.appState.auth.sessionId of
                         Just _ ->
                             [ el [ pointer, onClick RequestSavedPlans ] <| text "Saved plans"
                             , el [ pointer, onClick RequestLogout ] <| text "Logout"
                             ]
 
                         Nothing ->
-                            [ el [ pointer, onClick RequestLogin ] <| text "Login" ]
+                            [ el [ pointer, onClick RequestLogin ] <| text "Login"
+                            , el [ pointer, onClick RequestRegistration ] <| text "Registration"
+                            ]
                    )
 
         panel =
@@ -330,16 +329,11 @@ menuPanel model =
         overlay =
             el [ width <| fillPortion 4, height fill, onClick ToggleMenu ] none
     in
-    if model.isMenuOpen then
+    if model.appState.isMenuOpen then
         row [ width fill, height fill ] [ overlay, panel ]
 
     else
         none
-
-
-serverUrl : String
-serverUrl =
-    "http://localhost:3000/"
 
 
 loginPage : Model -> Element Msg
@@ -347,13 +341,13 @@ loginPage model =
     column [ paddingXY 0 20, spacingXY 0 10, width (px 300), centerX ]
         [ Input.username Attr.input
             { onChange = Auth << Auth.ChangeUserName
-            , text = model.auth.userName
+            , text = model.appState.auth.userName
             , label = Input.labelAbove [] <| text "User name:"
             , placeholder = Nothing
             }
         , Input.currentPassword Attr.input
             { onChange = Auth << Auth.ChangePassword
-            , text = model.auth.password
+            , text = model.appState.auth.password
             , label = Input.labelAbove [] <| text "Password:"
             , placeholder = Nothing
             , show = False
@@ -362,63 +356,8 @@ loginPage model =
             { onPress = Just <| Auth Auth.StartLogin
             , label = el [ centerX ] <| text "Login"
             }
-        , el Attr.error <| text model.lastError
+        , el Attr.error <| text model.appState.lastError
         ]
-
-
-savedPlansPage : Model -> Element Msg
-savedPlansPage model =
-    let
-        annotateVersion name planVersion =
-            { version = planVersion.version
-            , planText = planVersion.planText
-            , createdAt = planVersion.createdAt
-            , name = name
-            }
-
-        annotateVersions savedPlan =
-            List.map (annotateVersion savedPlan.name) savedPlan.versions
-
-        tableAttrs =
-            [ width (px 800)
-            , paddingEach { top = 10, bottom = 50, left = 10, right = 10 }
-            , spacingXY 10 10
-            , centerX
-            ]
-
-        headerAttrs =
-            [ Font.bold
-            , Background.color Color.lightGrey
-            , Border.color Color.darkCharcoal
-            , Border.widthEach { bottom = 1, top = 0, left = 0, right = 0 }
-            , centerX
-            ]
-    in
-    table tableAttrs
-        { data = List.concatMap annotateVersions model.savedPlans
-        , columns =
-            [ { header = el headerAttrs <| text "Plan name"
-              , width = fill
-              , view =
-                    \plan ->
-                        el
-                            [ Font.underline
-                            , mouseOver [ Font.color lightCharcoal ]
-                            , onClick <| ShowPlan plan.planText
-                            ]
-                        <|
-                            text plan.name
-              }
-            , { header = el headerAttrs <| text "Creation time"
-              , width = fill
-              , view = .createdAt >> text
-              }
-            , { header = el headerAttrs <| text "Version"
-              , width = fill
-              , view = .version >> String.fromInt >> text
-              }
-            ]
-        }
 
 
 keyDecoder : Model -> Decode.Decoder Msg
@@ -440,7 +379,7 @@ keyDecoder model =
 
 keyToMsg : Model -> String -> Msg
 keyToMsg model key =
-    case ( key, model.auth.sessionId ) of
+    case ( key, model.appState.auth.sessionId ) of
         ( "KeyS", Just id ) ->
             RequestSavedPlans
 
@@ -456,8 +395,9 @@ view model =
     let
         content =
             case model.currPage of
-                DisplayPage ->
-                    displayPage model
+                DisplayPage pageModel ->
+                    Display.page model.appState pageModel
+                        |> Element.map Display
 
                 InputPage ->
                     inputPage model
@@ -465,8 +405,13 @@ view model =
                 LoginPage ->
                     loginPage model
 
-                SavedPlansPage ->
-                    savedPlansPage model
+                RegistrationPage pageModel ->
+                    Registration.page pageModel
+                        |> Element.map Register
+
+                SavedPlansPage pageModel ->
+                    SavedPlans.page pageModel
+                        |> Element.map SavedPlans
     in
     { title = "VisExp"
     , body =

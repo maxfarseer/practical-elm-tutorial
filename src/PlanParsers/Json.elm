@@ -1,15 +1,7 @@
-module PlanParsers.Json exposing (CommonFields, CteNode, Plan(..), PlanJson, Plans(..), ResultNode, SeqScanNode, SortNode, decodeCommonFields, decodeCteNode, decodeGenericNode, decodeNode, decodePlan, decodePlanJson, decodePlans, decodeResultNode, decodeSeqScanNode, decodeSortNode)
+module PlanParsers.Json exposing (CommonFields, CteNode, Plan(..), PlanJson, PlanVersion, Plans(..), ResultNode, SavedPlan, SeqScanNode, SortNode, decodeCommonFields, decodeCteNode, decodeGenericNode, decodeNode, decodePlan, decodePlanJson, decodePlanVersion, decodePlans, decodeResultNode, decodeSavedPlans, decodeSeqScanNode, decodeSortNode)
 
 import Json.Decode as Decode
 import Json.Decode.Pipeline exposing (..)
-
-
-type Plan
-    = PCte CteNode
-    | PResult ResultNode
-    | PSeqScan SeqScanNode
-    | PSort SortNode
-    | PGeneric CommonFields
 
 
 type alias PlanJson =
@@ -20,12 +12,22 @@ type alias PlanJson =
     }
 
 
+type Plan
+    = PCte CteNode
+    | PGeneric CommonFields
+    | PResult ResultNode
+    | PSeqScan SeqScanNode
+    | PSort SortNode
+
+
 type Plans
     = Plans (List Plan)
 
 
 type alias CommonFields =
-    { nodeType : String
+    { actualLoops : Int
+    , actualTotalTime : Float
+    , nodeType : String
     , plans : Plans
     , relationName : String
     , schema : String
@@ -34,16 +36,16 @@ type alias CommonFields =
     }
 
 
+type alias ResultNode =
+    { common : CommonFields
+    , parentRelationship : String
+    }
+
+
 type alias CteNode =
     { common : CommonFields
     , alias_ : String
     , cteName : String
-    }
-
-
-type alias ResultNode =
-    { common : CommonFields
-    , parentRelationship : String
     }
 
 
@@ -65,6 +67,38 @@ type alias SortNode =
     }
 
 
+type alias PlanVersion =
+    { version : Int
+    , createdAt : String
+    , planText : String
+    }
+
+
+type alias SavedPlan =
+    { id : String
+    , name : String
+    , versions : List PlanVersion
+    }
+
+
+decodePlanVersion : Decode.Decoder PlanVersion
+decodePlanVersion =
+    Decode.succeed PlanVersion
+        |> required "version" Decode.int
+        |> required "createdAt" Decode.string
+        |> required "planText" Decode.string
+
+
+decodeSavedPlans : Decode.Decoder (List SavedPlan)
+decodeSavedPlans =
+    Decode.list
+        (Decode.succeed SavedPlan
+            |> required "id" Decode.string
+            |> required "name" Decode.string
+            |> required "versions" (Decode.list decodePlanVersion)
+        )
+
+
 decodePlanJson : Decode.Decoder PlanJson
 decodePlanJson =
     Decode.succeed PlanJson
@@ -72,28 +106,6 @@ decodePlanJson =
         |> required "Plan" decodePlan
         |> optional "Planning Time" Decode.float 0
         |> optional "Triggers" (Decode.list Decode.string) []
-
-
-decodeResultNode : Decode.Decoder Plan
-decodeResultNode =
-    let
-        innerDecoder =
-            Decode.succeed ResultNode
-                |> custom decodeCommonFields
-                |> required "Parent Relationship" Decode.string
-    in
-    Decode.map PResult innerDecoder
-
-
-decodeCommonFields : Decode.Decoder CommonFields
-decodeCommonFields =
-    Decode.succeed CommonFields
-        |> required "Node Type" Decode.string
-        |> optional "Plans" decodePlans (Plans [])
-        |> optional "Relation Name" Decode.string ""
-        |> optional "Schema" Decode.string ""
-        |> required "Startup Cost" Decode.float
-        |> required "Total Cost" Decode.float
 
 
 decodePlans : Decode.Decoder Plans
@@ -105,6 +117,25 @@ decodePlan : Decode.Decoder Plan
 decodePlan =
     Decode.field "Node Type" Decode.string
         |> Decode.andThen decodeNode
+
+
+decodeNode : String -> Decode.Decoder Plan
+decodeNode nodeType =
+    case nodeType of
+        "CTE Scan" ->
+            decodeCteNode
+
+        "Result" ->
+            decodeResultNode
+
+        "Seq Scan" ->
+            decodeSeqScanNode
+
+        "Sort" ->
+            decodeSortNode
+
+        _ ->
+            decodeGenericNode
 
 
 decodeCteNode : Decode.Decoder Plan
@@ -147,25 +178,30 @@ decodeSortNode =
     Decode.map PSort innerDecoder
 
 
+decodeResultNode : Decode.Decoder Plan
+decodeResultNode =
+    let
+        innerDecoder =
+            Decode.succeed ResultNode
+                |> custom decodeCommonFields
+                |> required "Parent Relationship" Decode.string
+    in
+    Decode.map PResult innerDecoder
+
+
 decodeGenericNode : Decode.Decoder Plan
 decodeGenericNode =
     Decode.map PGeneric decodeCommonFields
 
 
-decodeNode : String -> Decode.Decoder Plan
-decodeNode nodeType =
-    case nodeType of
-        "CTE Scan" ->
-            decodeCteNode
-
-        "Result" ->
-            decodeResultNode
-
-        "Seq Scan" ->
-            decodeSeqScanNode
-
-        "Sort" ->
-            decodeSortNode
-
-        _ ->
-            decodeGenericNode
+decodeCommonFields : Decode.Decoder CommonFields
+decodeCommonFields =
+    Decode.succeed CommonFields
+        |> required "Actual Loops" Decode.int
+        |> required "Actual Total Time" Decode.float
+        |> required "Node Type" Decode.string
+        |> optional "Plans" decodePlans (Plans [])
+        |> optional "Relation Name" Decode.string ""
+        |> optional "Schema" Decode.string ""
+        |> required "Startup Cost" Decode.float
+        |> required "Total Cost" Decode.float
