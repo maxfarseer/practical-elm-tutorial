@@ -7,6 +7,7 @@ import Http
 import Json.Decode
 import Json.Encode
 import Ports exposing (saveSessionId)
+import Types exposing (asString, makeSessionId)
 import Validate exposing (..)
 
 
@@ -66,10 +67,20 @@ update msg { serverUrl } model =
             ( { model | userName = u }, Cmd.none, DoNothing )
 
         FinishRegistration (Ok sessionIdStr) ->
-            ( model
-            , saveSessionId <| Just sessionIdStr
-            , FinishSuccessfully sessionIdStr
-            )
+            case makeSessionId sessionIdStr of
+                Just sessionId ->
+                    ( model
+                    , saveSessionId <| Just (asString sessionId)
+                    , FinishSuccessfully sessionIdStr
+                    )
+
+                Nothing ->
+                    ( { model
+                        | errors = [ "Invalid session ID returned from the server" ]
+                      }
+                    , Cmd.none
+                    , DoNothing
+                    )
 
         FinishRegistration (Err error) ->
             ( { model | errors = [ Debug.toString error ] }, Cmd.none, DoNothing )

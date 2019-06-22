@@ -21,22 +21,26 @@ type PageMsg
     | DoNothing
 
 
+type alias SessionId =
+    String
+
+
 type alias Model =
     { lastError : String
     , savedPlans : List SavedPlan
     }
 
 
-init : String -> Maybe String -> ( Model, Cmd Msg )
+init : String -> SessionId -> ( Model, Cmd Msg )
 init serverUrl sessionId =
     ( { lastError = "", savedPlans = [] }, getSavedPlans serverUrl sessionId )
 
 
-getSavedPlans : String -> Maybe String -> Cmd Msg
+getSavedPlans : String -> SessionId -> Cmd Msg
 getSavedPlans serverUrl sessionId =
     Http.request
         { method = "GET"
-        , headers = [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
+        , headers = [ Http.header "SessionId" sessionId ]
         , url = serverUrl ++ "plans"
         , body = Http.emptyBody
         , timeout = Nothing

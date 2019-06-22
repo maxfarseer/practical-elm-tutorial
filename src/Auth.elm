@@ -17,6 +17,18 @@ type Msg
     | StartLogin
 
 
+type alias ServerUrl =
+    String
+
+
+type alias UserName =
+    String
+
+
+type alias Password =
+    String
+
+
 type alias Model =
     { lastError : String
     , password : String
@@ -34,7 +46,7 @@ init sessionId =
     }
 
 
-login : String -> String -> String -> Cmd Msg
+login : ServerUrl -> UserName -> Password -> Cmd Msg
 login serverUrl userName password =
     let
         body =

@@ -22,6 +22,10 @@ import Ports
 import Types exposing (AppState)
 
 
+type alias SessionId =
+    String
+
+
 type Page
     = InputPage
     | DisplayPage Display.Model
@@ -38,7 +42,7 @@ type Msg
     | Auth Auth.Msg
     | Display Display.Msg
     | RequestLogin
-    | RequestSavedPlans
+    | RequestSavedPlans SessionId
     | SavedPlans SavedPlans.Msg
     | FinishSavedPlans (Result Http.Error (List SavedPlan))
     | SubmitPlan
@@ -165,10 +169,10 @@ update msg ({ appState } as model) =
         ( DumpModel (), _ ) ->
             ( Debug.log "model" model, Cmd.none )
 
-        ( RequestSavedPlans, _ ) ->
+        ( RequestSavedPlans sessionId, _ ) ->
             let
                 ( pageModel, pageCmd ) =
-                    SavedPlans.init appState.serverUrl appState.auth.sessionId
+                    SavedPlans.init appState.serverUrl sessionId
             in
             ( { model | currPage = SavedPlansPage pageModel }
             , Cmd.map SavedPlans pageCmd
@@ -294,8 +298,8 @@ menuPanel model =
         items =
             [ el [ pointer, onClick CreatePlan ] <| text "New plan" ]
                 ++ (case model.appState.auth.sessionId of
-                        Just _ ->
-                            [ el [ pointer, onClick RequestSavedPlans ] <| text "Saved plans"
+                        Just sessionId ->
+                            [ el [ pointer, onClick (RequestSavedPlans sessionId) ] <| text "Saved plans"
                             , el [ pointer, onClick RequestLogout ] <| text "Logout"
                             ]
 
@@ -381,7 +385,7 @@ keyToMsg : Model -> String -> Msg
 keyToMsg model key =
     case ( key, model.appState.auth.sessionId ) of
         ( "KeyS", Just id ) ->
-            RequestSavedPlans
+            RequestSavedPlans id
 
         ( "KeyN", _ ) ->
             CreatePlan
