@@ -2,7 +2,7 @@
   "name": "practical-elm-app",
   "version": "1.0.0",
   "main": "index.js",
-  "author": "James Moore & Max P",
+  "author": "Alex Korban & Max P",
   "license": "MIT",
   "scripts": {
     "dev": "elm-live src/Main.elm -s index.html -p 1234 -- --debug --output=./elm.js"
